@@ -8,7 +8,13 @@ import json
 import time
 import pathlib
 
-def extract_caiso_charts_with_titles(url, headless=True):
+
+
+def extract_caiso_charts_with_titles(
+    url: str,
+    hybrid: bool = False,
+    headless: bool = True,
+):
     """
     Extract CAISO chart data with proper title detection
 
@@ -35,13 +41,21 @@ def extract_caiso_charts_with_titles(url, headless=True):
         driver.get(url)
         wait = WebDriverWait(driver, 30)
 
-        hybrid_tab = wait.until(EC.element_to_be_clickable((By.LINK_TEXT, "Hybrid")))
-        hybrid_tab.click()
+        if hybrid:
+            hybrid_tab = (
+                wait
+                .until(EC.element_to_be_clickable((By.LINK_TEXT, "Hybrid")))
+            )
+            hybrid_tab.click()
 
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".highcharts-container, svg, canvas")))
+        wait.until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR,
+                 ".highcharts-container, svg, canvas")
+            )
+        )
         time.sleep(5)  # Additional wait for JavaScript
 
-        # Enhanced script that better finds titles
         extraction_script = """
         var result = {
             titles: [],
@@ -156,11 +170,11 @@ def convert_to_dataframes(extracted_data):
     """
     dataframes = {}
 
-    for chart in extracted_data['charts']:
-        chart_title = chart['title']
+    for chart in extracted_data["charts"]:
+        chart_title = chart["title"]
 
         #
-        # THIS SCRIPT ACTUALLY RETRIEVES THE 'STORAGE' TAB CHARTS AS WELL;
+        # THIS SCRIPT ACTUALLY RETRIEVES THE "STORAGE" TAB CHARTS AS WELL;
         # HERE WE FILTER THEM OUT
         #
         if chart_title.startswith("Chart"):
@@ -169,22 +183,22 @@ def convert_to_dataframes(extracted_data):
         # Combine all series into a single DataFrame for this chart
         all_data = []
 
-        for series in chart['series']:
-            for point in series['data']:
+        for series in chart["series"]:
+            for point in series["data"]:
                 row = {
-                    'series_name': series['name'],
-                    'value': point['y']
+                    "series_name": series["name"],
+                    "value": point["y"]
                 }
 
                 # Add time information
-                if 'datetime' in point:
-                    row['datetime'] = pd.to_datetime(point['datetime'])
+                if "datetime" in point:
+                    row["datetime"] = pd.to_datetime(point["datetime"])
                 else:
-                    row['x'] = point['x']
+                    row["x"] = point["x"]
 
                 # Add category if available
-                if 'category' in point:
-                    row['category'] = point['category']
+                if "category" in point:
+                    row["category"] = point["category"]
 
                 all_data.append(row)
 
@@ -192,8 +206,8 @@ def convert_to_dataframes(extracted_data):
             df = pd.DataFrame(all_data)
 
             # If we have datetime, set it as index
-            if 'datetime' in df.columns:
-                df = df.set_index('datetime').sort_index()
+            if "datetime" in df.columns:
+                df = df.set_index("datetime").sort_index()
 
             dataframes[chart_title] = df
             print(f"✓ Created DataFrame for '{chart_title}': {df.shape}")
@@ -202,83 +216,76 @@ def convert_to_dataframes(extracted_data):
 
 
 
-ANOMALOUS_DATES = {
-    "may-08-2025": "may-8-2025",
-    "jul-09-2025": "jul-9-2025",
-}
+with open("esr/anomalous_dates.json", "r") as file:
+    ANOMALOUS_DATES = json.load(file)
 
-def format_2022_url(date) -> str:
-    date_str = date.strftime("%b%d-%Y").lower()
-    date_str = ANOMALOUS_DATES.get(date_str, date_str)
-    return (
-        "https://www.caiso.com/documents/"
-        f"dailyenergystoragereport{date_str}.html"
-    )
+def format_url(date: str) -> str:
+    date = pd.to_datetime(date)
 
-def format_2023_url(date) -> str:
-    date_str = date.strftime("%b%d-%Y").lower()
-    date_str = ANOMALOUS_DATES.get(date_str, date_str)
-    return (
-        "https://www.caiso.com/documents/"
-        f"dailyenergystoragereport{date_str}.html"
-    )
-
-def format_2024_url(date) -> str:
-    if (date.month < 5) | ((date.month == 5) & (date.day < 24)):
+    if (date.year == 2022) or (date.year == 2023):
         date_str = date.strftime("%b%d-%Y").lower()
         date_str = ANOMALOUS_DATES.get(date_str, date_str)
+
         return (
             "https://www.caiso.com/documents/"
             f"dailyenergystoragereport{date_str}.html"
         )
     else:
-        if (date.month == 5) & (date.day >= 30):
-            date_str = date.strftime("%b-%d%Y").lower()
+        if (
+            (date.year == 2024) &
+            ((date.month < 5) | ((date.month == 5) & (date.day < 24)))
+        ):
+            date_str = date.strftime("b%d-%Y")
+            date_str = ANOMALOUS_DATES.get(date_str, date_str)
+
+            return (
+                "https://www.caiso.com/documents/"
+                f"dailyenergystoragereport{date_str}.html"
+            )
+        else:
+            date_str = date.strftime("%b-%d-%Y").lower()
             date_str = ANOMALOUS_DATES.get(date_str, date_str)
             return (
                 "https://www.caiso.com/documents/"
                 f"daily-energy-storage-report-{date_str}.html"
             )
-        return format_2025_url(date)
 
-def format_2025_url(date) -> str:
-    date_str = date.strftime("%b-%d-%Y").lower()
-    date_str = ANOMALOUS_DATES.get(date_str, date_str)
-    return (
-        "https://www.caiso.com/documents/"
-        f"daily-energy-storage-report-{date_str}.html"
-    )
 
-def read_single_day_data(date) -> None:
+
+def read_single_day_data(
+    date: str | pd.Timestamp,
+    target_dir: str | pathlib.Path,
+    hybrid: bool,
+) -> None:
     date = pd.to_datetime(date)
+    url = format_url(date)
 
-    if date.year == 2025:
-        url = format_2025_url(date)
-    elif date.year == 2024:
-        url = format_2024_url(date)
-    elif date.year == 2023:
-        url = format_2023_url(date)
-    elif date.year == 2022:
-        url = format_2022_url(date)
-    else:
-        raise NotImplementedError("year =", date.year)
-
-    data = extract_caiso_charts_with_titles(url, headless=True)
+    data = extract_caiso_charts_with_titles(url, hybrid=hybrid, headless=True)
     dfs_and_names = convert_to_dataframes(data)
 
-    #
-    # will need to re-do this for hybrid
-    #
-    TARGET_DIR = pathlib.Path.cwd() / "esr_data" / "hybrid"
-    TARGET_DIR.mkdir(parents=True, exist_ok=True)
-
     for chart_title, df in dfs_and_names.items():
-        file_name = TARGET_DIR / (date.strftime("%Y%m%d") + "_" + chart_title + ".csv")
+        # file_name = TARGET_DIR / (date.strftime("%Y%m%d") + "_" + chart_title + ".csv")
+        file_name = (
+            target_dir /
+            (date.strftime("%Y%m%d") + "_" + chart_title + ".csv")
+        )
         df.to_csv(file_name)
 
-    return None
 
-if __name__ == "__main__":
-    dates = pd.date_range("2022-07-31", "2024-12-31", freq="d")
+
+def download_date_range(
+    start: str,
+    end: str,
+    output_dir: str | pathlib.Path,
+    hybrid: bool,
+):
+    if not end:
+        # CAISO seems to update the ESR on a two-day delay?
+        end = (pd.Timestamp.now() - pd.Timedelta(days=2)).date()
+
+    output_dir = pathlib.Path(output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    dates = pd.date_range(start, end, freq="d")
     for date in dates:
-        read_single_day_data(date)
+        read_single_day_data(date, output_dir, hybrid)
